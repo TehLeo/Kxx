@@ -1,0 +1,21 @@
+html, body {
+  width: 100%;
+  height: 100%;
+  margin: 0px;
+  border: 0;
+  overflow: hidden; /*  Disable scrollbars */
+  display: block;  /* No floating content on sides */
+}
+#mainBody {
+    background-color: #484848;
+}
+#mainCanvasWrapper {
+	position: relative;
+}
+#mainCanvas {
+	position:absolute; left:0px; top:0px; 
+}
+button {
+	position: relative;
+	z-index: 2;
+}
