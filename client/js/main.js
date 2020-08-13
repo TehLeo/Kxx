@@ -49,6 +49,13 @@ class GlobalData {
 		this.player = null;
 		//this.game.player = 0;
 	}
+	hasBall() {
+		return this.game.ball.charId === this.player.charId;
+	}
+	getChar() {
+		if(this.player === null || this.player.charId === -1) return null;
+		return this.game.chars[this.player.charId];
+	}
 }
 
 var gl = new GlobalData();
@@ -63,8 +70,11 @@ class Canvas {
 			RIGHT: false
 		};
 		this.movement = Movement.NONE;
+		this.doTackle = false;
+		this.tackleA = 0;
 		this.g = this.canvas.getContext('2d');
 		this.mXY = new vec2(0,0);
+		this.debugPos = new vec2(0.0,0.0);
 
 		log(0, "UP " + this.keyMap );
 		log(0, "UP " + this.keyMap );
@@ -85,36 +95,40 @@ class Canvas {
 		this.mXY.y = e.clientY;
 	}
 	mouseDown(e) {
-		var p0 = null; //gl.game.getPlayer();
+		var p0 = gl.getChar();
 		if(p0 === null) return;
 		var ball = gl.game.ball;
 		switch (e.button) {
 			case 0: //LEFT CLICK
-				if(gl.game.hasBall()) {
+				if(gl.hasBall()) {
 					//dist();
 					var len = p0.xy.dist(this.mXY);
 					if(len >= 1.0) {
 						len = 1.0/len;
 						//Shoot
-						ball.delay = 0.5;
-						ball.dxy.x = len*(this.mXY.x-p0.xy.x);
-						ball.dxy.y = len*(this.mXY.y-p0.xy.y);
+						//ball.delay = 0.5;
+						//ball.dxy.x = len*(this.mXY.x-p0.xy.x);
+						//ball.dxy.y = len*(this.mXY.y-p0.xy.y);
 					
-						ball.xy.set(p0.xy);
-						ball.player = -1;
+						//ball.xy.set(p0.xy);
+						//ball.player = -1;
 					}
 				}
 				else {
 					//Tackle
+
 					if(p0.canTackle()) {
 						var len = p0.xy.dist(this.mXY);
 						if(len >= 1.0) {
-							len = 1.0/len;
+							//len = 1.0/len;
 						
-							p0.tackle = 1.0;
-							p0.delay = 1.5;
-							p0.dxy.x = len*(this.mXY.x-p0.xy.x);
-							p0.dxy.y = len*(this.mXY.y-p0.xy.y);
+							//p0.tackle = 1.0;
+							//p0.delay = 1.5;
+							//p0.dxy.x = len*(this.mXY.x-p0.xy.x);
+							//p0.dxy.y = len*(this.mXY.y-p0.xy.y);
+
+							this.doTackle = true;
+							this.tackleA = atan2PI(this.mXY.x-p0.xy.x,this.mXY.y-p0.xy.y);
 						}	
 					}
 				}
@@ -182,7 +196,7 @@ class Canvas {
         this.canvas.width = window.innerWidth;
         this.canvas.height = window.innerHeight;
     }
-	testUpdate() {
+	testUpdate(step) {
 		var player = gl.player;
 		if(player === null) return;
 
@@ -193,7 +207,10 @@ class Canvas {
 		var chars = gl.game.chars;
 		var ball = gl.game.ball;
 
-		for(var k = 0; k < chars.length; k++) {
+		var VAR_RUN_SPEED = 50;
+		var VAR_TCK_SPEED = 200;
+
+		/*for(var k = 0; k < chars.length; k++) {
 		
 			var p0 = chars[k] ; //gl.game.getPlayer();
 
@@ -239,7 +256,7 @@ class Canvas {
 			}
 			if(p0.delay > 0) p0.delay = Math.max(0, p0.delay-el);
 
-		}
+		}*/
 			/*
 			if(p0 !== null) {
 
@@ -311,20 +328,39 @@ class Canvas {
 		this.rect(RECT_L, RECT_T, RECT_R-RECT_L, RECT_B-RECT_T);
 		//=====DRAW=====
 		//arrow
-		if(p0 !== null) this.line(this.mXY.x, this.mXY.y, p0.xy.x, p0.xy.y);
+		//if(p0 !== null) this.line(this.mXY.x, this.mXY.y, p0.xy.x, p0.xy.y);
+
+		this.color("#aa7732");
+		this.circle(this.debugPos.x,this.debugPos.y,25);
 
 		this.color("#000000");
 		
 		//chars
 		for(var i = 0; i < chars.length; i++) {
 		  	var p = chars[i];
+
+			var elStep = (step-p.gameStep)*TICK_MS*0.001;
+
+			if(i == gl.player.charId) {
+				
+				log(5, " el " + elStep  + " " + p.dxy.x + " " + p.dxy.y );
+			}
+
 			if(player.charId == i) {
 				this.color("#eaae62");
 			}
 			else {
 				this.color("#000000");
 			}
-			this.circle(p.xy.x,p.xy.y,50);
+
+			var spd = VAR_RUN_SPEED;
+			if(p.isTackling()) {
+				spd = VAR_TCK_SPEED;
+				//etc todo exact 
+				this.color("#aa7732");
+			}
+
+			this.circle(p.xy.x + elStep * spd * p.dxy.x, p.xy.y + elStep * spd * p.dxy.y,50);
 		}
 
 		this.color("#000000");
@@ -353,16 +389,26 @@ function init() {
 		chan = chan0;
     };	
 	chan0.onmessage = function(msg) {
-  		console.log(msg);
+  		//console.log(msg);
 		if(msg.data instanceof ArrayBuffer) { 
 			var buf = wrap(msg.data);
-			console.log("char data " + buf.dataU8);
+			//console.log("char data " + buf.dataU8);
 			
 			while(buf.pos < buf.limit) {
 				var type = buf.getByte();
 				switch(type) {
+					case MSG_GAME_TIME:
+						gl.game.setGameTime(buf);	
+						gl.game.started = true;
+					break;
 					case MSG_CHAR_DATA:
 						gl.game.setChar(buf);
+					break;
+					case MSG_CHAR_TCK:
+						gl.game.setTck(buf);
+					break;
+					case A.MSG_BALL:
+						gl.game.ball.fromBuf(buf);
 					break;
 					case MSG_GET_ALL_CHAR:
 						gl.game.setAllChars(buf);
@@ -370,8 +416,13 @@ function init() {
 					case MSG_PLAYER_DATA:
 						gl.player.fromBuf(buf);
 					break;
+					case A.MSG_DEBUG_POS:
+						canvas.debugPos.x = decompX(buf.getChar());
+						canvas.debugPos.y = decompY(buf.getChar());
+					break;
 					default:
 						buf.pos = buf.limit;
+						console.log("Unknown message " + type);
 						break;
 				}
 			}
@@ -393,22 +444,47 @@ init();
 
 var lastMovement = Movement.NONE;
 function updateLoop() {
+	if(!gl.game.started) return;
+
+	
+	var el = Date.now()-gl.game.startTime;
+	if(el < 0.0) return;
+
+	var step = el*TICK_MS_INV;
+	log("step", step);
+
+	gl.game.gameStep = toInt(step);
+
+	//find out current time
+	
+
 	//send input
 
 	if(chan !== null && chan.readyState == 1) {
+		var buf = _tmp();
+
 		if(lastMovement.id !== canvas.movement.id) {
 			lastMovement = canvas.movement;
-	
-			chan.send(Movement.toBuf(lastMovement, _tmp()).flip());
+			Movement.toBuf(lastMovement, buf);
+		}
+
+		if(canvas.doTackle) {
+			canvas.doTackle = false;
+			Movement.toBufTackle(canvas.tackleA, buf);
+		}
+
+		if(buf.pos > 0) {
+			var data = buf.flip();
+			chan.send(data);
 		}
 	}
 	
-	canvas.testUpdate();
+	canvas.testUpdate(step);
 }
 var loop = null;
 function startLoop() {
 	if(loop !== null) return;
-	loop = setInterval(updateLoop, 100);
+	loop = setInterval(updateLoop, 50);
 }
 function pauseLoop() {
 	if(loop === null) return;
