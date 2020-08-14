@@ -84,8 +84,50 @@ wss.on("connection", ws => {
 							var ch = p.game.chars[p.charId];
 							if(ch.canMove() && ch.movementId !== movement.id) {
 								ch.dxy.set2(movement.dx, movement.dy);
-								ch.movementId = movement.id;
+								ch.setMovementId(movement.id);
 								ch.movUpdateNeeded = true;
+							}
+						}
+					break;
+					case A.MSG_CLIENT_DASH:
+						if(p.game != null && p.charId >= 0) {
+							var ch = p.game.chars[p.charId];
+							if(ch.canDash()) {
+								if(ch.movementId === Movement.NONE.id) {
+									ch.setMovementId(Movement.UP.id);
+									//ch.movementId = Movement.DOWN.id;
+								}
+								var movement = Movement.fromId(ch.movementId);
+								ch.dxy.set2(movement.dx, movement.dy);
+								ch.dash = ch.game.gameStep + A.DASH_STEPS;
+								ch.dashDelay = ch.dash + A.DASH_DELAY_STEPS;
+								ch.dashFlag = true;
+								ch.dashUpdateNeeded = true;
+							}
+						}
+					break;
+					case A.MSG_CLIENT_PASS_START:
+					case A.MSG_CLIENT_VOLLEY_START:
+						if(p.game != null && p.charId >= 0) {
+							var ch = p.game.chars[p.charId];
+							if(p.game.ball.charId === p.charId && ch.canPass()) {
+								ch.passStart = type;
+								ch.passStep = ch.game.gameStep;
+								ch.passUpdateNeeded = true;
+							}
+						}
+					break;
+					case A.MSG_CLIENT_PASS_END:
+					case A.MSG_CLIENT_VOLLEY_END:
+						var passEndStep = buf.getChar();
+						var passA = lib.decompA(buf.getChar());
+						if(p.game != null && p.charId >= 0) {
+							var ch = p.game.chars[p.charId];
+							console.log(" pass " + (p.game.ball.charId === p.charId) + " " + (ch.passStart === type-1));
+							if(p.game.ball.charId === p.charId && ch.passStart === type-1) {
+								ch.passEndStep = Math.max(ch.passStep, Math.min(passEndStep, ch.game.gameStep));
+								ch.passA = passA;
+								ch.passEndUpdateNeeded = true;
 							}
 						}
 					break;
@@ -153,6 +195,22 @@ function updateLoop() {
 		var charaStepEl = g.gameStep - chars[0].gameStep;
 
 		for(var s = 0; s < charaStepEl; s++) {
+
+			if(!ball.isFree()) {
+				var p0 = chars[ball.charId];
+				if(p0.passEndUpdateNeeded && p0.passEndStep <= p0.gameStep) {s
+					p0.passEndUpdateNeeded = false;
+					p0.ballDelay = p0.gameStep+A.BALL_DELAY_STEPS;
+					ball.pickDelay = p0.gameStep+A.BALL_PICK_DELAY_STEPS;
+					ball.updateNeeded = true;
+					ball.charId = -1;
+					ball.xy.set(p0.xy);
+					ball.dxy.set2(Math.sin(p0.passA), Math.cos(p0.passA));
+					p0.passStart = 0;
+					p0.movUpdateNeeded = true;
+				}
+			}
+
 			for(var k = 0; k < chars.length; k++) {
 				var p0 = chars[k];
 				if(p0.isTackling()) {
@@ -161,11 +219,29 @@ function updateLoop() {
 					p0.xy.y += p0.dxy.y*spd*el;
 					p0.clampXY();
 				}
+				else if(p0.isDashing()) {
+					spd = A.DASH_SPD;
+					p0.xy.x += p0.dxy.x*spd*el;
+					p0.xy.y += p0.dxy.y*spd*el;
+					p0.clampXY();
+				}
+				else if(p0.isPassing()) {
+					spd = A.PLAYER_PASS_SPD;
+					p0.xy.x += p0.dxy.x*spd*el;
+					p0.xy.y += p0.dxy.y*spd*el;
+					p0.clampXY();
+				}
 				else {
+					if(p0.dashFlag) {
+						p0.dashFlag = false;
+						var movement = Movement.fromId(p0.movementId);
+						p0.dxy.set2(movement.dx, movement.dy);
+						p0.movUpdateNeeded = true;
+					}
 					if(p0.tackleFlag) {		
 						p0.tackleFlag = false;
 						if(p0.movementId !== Movement.TACKLED.id) {
-							p0.movementId = Movement.NONE.id;
+							p0.setMovementId(Movement.NONE.id);
 						}
 						p0.dxy.set2(0.0, 0.0);
 						p0.movUpdateNeeded = true;
@@ -224,7 +300,13 @@ function updateLoop() {
 				if(minK !== -1 && minDist < A.BALL_PICK_DIST_SQ) {
 					var p0 = chars[minK];
 					if(p0.isTackling()) {
-						var len = Math.sqrt(minDist);
+						var tackleBallSpeed = 2;
+
+						ball.dxy.x = tackleBallSpeed*(Math.sin(p0.tckUpdateA));
+						ball.dxy.y = tackleBallSpeed*(Math.cos(p0.tckUpdateA));
+						p0.ballDelay = p0.game.gameStep+A.BALL_DELAY_STEPS;
+						ball.updateNeeded = true;
+						/*var len = Math.sqrt(minDist);
 						if(len < 1.0) {
 							ball.dxy.x = 0.0;
 							ball.dxy.y = -1.0;
@@ -234,15 +316,16 @@ function updateLoop() {
 						else {
 							len = 1.0/len;
 							p0.ballDelay = p0.game.gameStep+A.BALL_DELAY_STEPS;
-							ball.dxy.x = dist*(ball.xy.x-p0.xy.x);
-							ball.dxy.y = dist*(ball.xy.y-p0.xy.y);
+							ball.dxy.x = len*(ball.xy.x-p0.xy.x);
+							ball.dxy.y = len*(ball.xy.y-p0.xy.y);
 							//ball.dxy.x = len*(this.mXY.x-p0.xy.x);
 							//ball.dxy.y = len*(this.mXY.y-p0.xy.y);
 							ball.updateNeeded = true;
-						}
+						}*/
 					}	
 					else {
 						if(ball.isPickable()) {
+							console.log("BALL PICKED " + minK);
 							ball.charId = minK;
 							ball.updateNeeded = true;
 						}
@@ -264,12 +347,14 @@ function updateLoop() {
 						//order specific code... could be refactored 
 						//to check 
 						if(p0.xy.distSq(p2.xy) <= A.TCK_DIST_SQ) {
-							p2.movementId = Movement.TACKLED.id;
+							p2.setMovementId(Movement.TACKLED.id);
 							p2.dxy.set2(0.0, 0.0);
 							p2.delay = p2.game.gameStep+A.TACKLED_DELAY_STEPS;
 							p2.movUpdateNeeded = true;
 							if(ball.charId === k2) {
+								p2.passStart = 0;
 								ball.charId = k;
+								p0.delay = Math.min(p0.delay, p0.gameStep+A.TCK_GOT_BALL_MAX_DELAY_STEPS);
 								ball.updateNeeded = true;
 							}
 						}
@@ -287,19 +372,33 @@ function updateLoop() {
 			//}
 			//if(p0.delay > 0) p0.delay = Math.max(0, p0.delay-el);
 
+			ball.gameStep++;
 			for(var k = 0; k < chars.length; k++) {
 				chars[k].gameStep++;
 			}
-
+			
 		}
 
 		for(var k = 0; k < chars.length; k++) {
-			var chara = chars[k];
+			var chara = chars[k];		
+
+			if(chara.passUpdateNeeded) {
+				chara.passUpdateNeeded = false;
+				if(chara.passStart === A.MSG_CHAR_PASS_START || chara.passStart === A.MSG_CHAR_VOLLEY_START) {
+					g.getPass(buf, chara.passStart);
+				}
+			}	
 
 			if(chara.tckUpdateNeeded) {
 				chara.movUpdateNeeded = false;
 				chara.tckUpdateNeeded = false;
+				chara.dashUpdateNeeded = false;
 				g.getTck(buf, k, chara.tckUpdateA);
+			}
+			else if(chara.dashUpdateNeeded) {
+				chara.movUpdateNeeded = false;
+				chara.dashUpdateNeeded = false;
+				g.getDash(buf, k);
 			}
 			else if(chara.movUpdateNeeded) {
 				chara.movUpdateNeeded = false;
@@ -396,7 +495,7 @@ function updateLoop() {
 		}
 	}
 
-
+	/*
 	var ps = gl.players;
 	for(var i = 0; i < ps.length; i++) {
 		var p = ps[i];
@@ -405,12 +504,17 @@ function updateLoop() {
 			var b = lib._tmp();
 
 			b.putByte(A.MSG_DEBUG_POS);
-			b.putChar(lib.compX(ch.xy.x));
-			b.putChar(lib.compY(ch.xy.y));
+
+			b.putChar(lib.compX(p.game.ball.xy.x));
+			b.putChar(lib.compY(p.game.ball.xy.y));
+			//b.putChar(lib.compX(ch.xy.x));
+			//b.putChar(lib.compY(ch.xy.y));
 
 			p.chan.send(b.flip());
 		}
 	}
+	*/
+	
 }
 var loop = null;
 function startLoop() {

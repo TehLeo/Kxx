@@ -19,23 +19,39 @@ const MSG_CHAR_TCK = 21;
 const MSG_CLIENT_MOVEMENT = 70;
 const MSG_CLIENT_TACKLE = 71;
 
-
+const SQRT_2_INV = 0.7071067811865476;
 
 class A { }
+
+A.DASH_STEPS = 10;
+A.DASH_DELAY_STEPS = 20;
+A.DASH_SPD = 300;
 	
-A.TCK_DELAY_STEPS = 20;
+A.TCK_DELAY_STEPS = 17;
+A.TCK_GOT_BALL_MAX_DELAY_STEPS = 5;
 A.TACKLED_DELAY_STEPS = 20;
-A.BALL_DELAY_STEP = 5;
+A.BALL_DELAY_STEPS = 5;
 
 A.PLAYER_RAD = 50;
 A.TCK_DIST = A.PLAYER_RAD*0.9;
 
 A.BALL_PICK_DIST = A.PLAYER_RAD;
 A.BALL_SPD = 300;
+A.BALL_POS_RAD = A.PLAYER_RAD*0.75;
+A.BALL_PICK_DELAY_STEPS = 10;
 
+A.PLAYER_PASS_SPD = 10;
 
+A.MSG_CHAR_DASH = 22;
+A.MSG_CHAR_PASS_START = 73;
+A.MSG_CHAR_VOLLEY_START = 75;
 A.MSG_BALL = 30;
 
+A.MSG_CLIENT_DASH = 72;
+A.MSG_CLIENT_PASS_START = 73;
+A.MSG_CLIENT_PASS_END = 74;
+A.MSG_CLIENT_VOLLEY_START = 75;
+A.MSG_CLIENT_VOLLEY_END = 76;
 A.MSG_DEBUG_POS = 100;
 
 
@@ -82,11 +98,9 @@ var isBigEndian = false;
 function initBuf0() {
 	tmp_arrayBufU16[0] = 0xAABB;
 	if(tmp_arrayBufU8[0] === 0xAA) {
-		//big e
 		isBigEndian = true;
 	}
 	else if(tmp_arrayBufU8[0] === 0xBB) {
-		//little e
 		isBigEndian = false;
 	}
 	else {
@@ -271,6 +285,14 @@ class vec2 {
 		this.x = 0.0;
 		this.y = 0.0;
 	}
+	distSq2(xx,yy) {
+		var x = this.x-xx;
+		var y = this.y-yy;
+		return x*x+y*y;
+	}
+	dist2(xx,yy) {
+		return Math.sqrt(this.distSq2(xx,yy));
+	}
 	distSq(b) {
 		var x = this.x-b.x;
 		var y = this.y-b.y;
@@ -306,11 +328,11 @@ class vec2 {
 var Movement = {
 	NONE:   		{id:0,  dx: 0.0,  dy: 0.0},
 	UP:    		 	{id:2,  dx: 0.0,  dy:-1.0},
-	UP_LEFT:   	  	{id:10, dx:-1.0,  dy:-1.0},
-	UP_RIGHT:     	{id:18, dx: 1.0,  dy:-1.0},
+	UP_LEFT:   	  	{id:10, dx:-SQRT_2_INV,  dy:-SQRT_2_INV},
+	UP_RIGHT:     	{id:18, dx: SQRT_2_INV,  dy:-SQRT_2_INV},
 	DOWN:   		{id:4,  dx: 0.0,  dy: 1.0},
-	DOWN_LEFT:   	{id:12, dx:-1.0,  dy: 1.0},
-	DOWN_RIGHT:   	{id:20, dx: 1.0,  dy: 1.0},
+	DOWN_LEFT:   	{id:12, dx:-SQRT_2_INV,  dy: SQRT_2_INV},
+	DOWN_RIGHT:   	{id:20, dx: SQRT_2_INV,  dy: SQRT_2_INV},
 	LEFT:   		{id:8,  dx:-1.0,  dy: 0.0},
 	RIGHT:  		{id:16, dx: 1.0,  dy: 0.0},
 
@@ -355,25 +377,50 @@ var Movement = {
 class Char {
 	constructor(game, x, y) {
 		this.game = game;
+		this.xyI = new vec2(x,y);
 		this.xy0 = new vec2(x,y);
 		this.xy = new vec2(x,y);
 		this.dxy = new vec2(0,0);
 		this.gameStep = 0;
 		this.lastGameStep = 0;
 		this.movementId = Movement.NONE.id;
+		this.lookAtDir = Movement.UP.id;
 		this.ballDelay = 0;
+		this.dash = 0;
+		this.dashDelay = 0;
+		this.dashFlag = false;
 		this.delay = 0;
 		this.tackle = 0;
 		this.tackleFlag = false;
+		this.dashUpdateNeeded = false;
 		this.movUpdateNeeded = false;
+		this.passUpdateNeeded = false;
+		this.passEndUpdateNeeded = false;
 		this.tckUpdateNeeded = false;
 		this.tckUpdateA = 0;
+		this.passStart = 0;
+		this.passStep = 0;
+		this.passEndStep = 0;
+		this.passA = 0;
 	}
 	angle() { return 0.0; }
 	canBall() {  return this.ballDelay < this.game.gameStep; }
+	canPass() { return this.delay < this.game.gameStep && !this.isDashing() && !this.isPassing(); }
+	canDash() { return this.delay < this.game.gameStep && this.dashDelay < this.game.gameStep && !this.isTackling() && !this.isPassing(); }
 	canMove() {  return this.delay < this.game.gameStep || this.isTackling();  }
-	canTackle() { return this.delay <= this.game.gameStep && this.tackle <= this.game.gameStep; }
+	canTackle() { return this.delay < this.game.gameStep && this.tackle < this.game.gameStep && !this.isPassing(); }
+	isDashing() { return this.dash > this.game.gameStep; }
 	isTackling() { return this.tackle > this.game.gameStep;  }
+	isPassing() { return this.passStart !== 0; }
+	isPassingA() { return this.passStart === A.MSG_CHAR_PASS_START; }
+	isPassingB() { return this.passStart === A.MSG_CHAR_VOLLEY_START; }
+
+	setMovementId(id) {
+		this.movementId = id;
+		if(this.movementId !== Movement.NONE.id && this.movementId !== Movement.TACKLED.id) {
+			this.lookAtDir = id;
+		}
+	} 
 
 	clampXY() {
 		if(this.xy.x < RECT_L) {
@@ -394,9 +441,12 @@ class Char {
 class Ball {
 	constructor(game) {
 		this.game = game;
+		this.xyI = new vec2(0,0);
 		this.xy = new vec2(0,0);
 		this.dxy = new vec2(0,0);
+		this.gameStep = 0;
 		this.delay = 0;
+		this.pickDelay = 0;
 		this.charId = -1;
 		this.updateNeeded = false;
 	}
@@ -404,7 +454,7 @@ class Ball {
 		return this.charId === -1;
 	}
 	isPickable() {
-		return this.isFree();
+		return this.isFree() && this.delay < this.game.gameStep && this.pickDelay < this.game.gameStep;
 	}
 	getX() {
 		return this.isFree()?this.xy.x:this.game.chars[this.charId].xy.x;
@@ -415,6 +465,7 @@ class Ball {
 	toBuf(b) {
 		b.putByte(A.MSG_BALL);
 		b.putByte(this.charId+1);
+		b.putChar(this.gameStep);
 		b.putChar(compX(this.xy.x));
 		b.putChar(compY(this.xy.y));
 		b.putFloat(this.dxy.x);
@@ -422,13 +473,13 @@ class Ball {
 		return b;
 	} 
 	fromBuf(b) {
+		var prevId = 
 		this.charId = b.getByte()-1;
+		this.gameStep = b.getChar();
 		this.xy.x = decompX(b.getChar());
 		this.xy.y = decompY(b.getChar());
 		this.dxy.x = b.getFloat();
 		this.dxy.y = b.getFloat();
-
-		console.log("BALL MESSAGE " + this.getX() + " " + this.getY() );
 	}
 }
 class Game {
@@ -460,6 +511,44 @@ class Game {
 		this.startTime = b.getObj();
 	}
 
+	getPass(b, id) {
+		if(id !== A.MSG_CHAR_PASS_START && id !== A.MSG_CHAR_VOLLEY_START) { 
+			throw "Pass type error " + id;
+		}
+		b.putByte(id);
+		b.putChar(this.gameStep);
+		return b;
+	}
+	setPass(b, id) {
+		if(id !== A.MSG_CHAR_PASS_START && id !== A.MSG_CHAR_VOLLEY_START) { 
+			throw "Pass type error " + id;
+		}
+		this.passStep = b.getChar();
+	}
+
+	getDash(b, id) {
+		b.putByte(A.MSG_CHAR_DASH);
+		var ch = this.chars[id];
+		b.putByte(id);
+		b.putByte(ch.movementId);
+		b.putChar(this.gameStep);
+		b.putChar(compX(ch.xy.x));
+		b.putChar(compY(ch.xy.y));
+		return b;
+	}	
+	setDash(b) {
+		var id = b.getByte();
+		var ch = this.chars[id];
+		var movement = Movement.fromBuf(b);
+		ch.setMovementId(movement.id);
+		ch.dxy.set2(movement.dx, movement.dy);
+		ch.gameStep = b.getChar();
+		ch.xy.x = decompX(b.getChar());
+		ch.xy.y = decompY(b.getChar());
+		ch.dash = ch.gameStep+A.DASH_STEPS;
+		ch.dashDelay = ch.dash+A.DASH_DELAY_STEPS;
+	}	
+
 	getTck(b, id, tackleA) {
 		b.putByte(MSG_CHAR_TCK);
 		var ch = this.chars[id];
@@ -476,7 +565,7 @@ class Game {
 		var id = b.getByte();
 		var ch = this.chars[id];
 		var movement = Movement.fromBuf(b);
-		ch.movementId = movement.id;
+		ch.setMovementId(movement.id);
 		//ch.dxy.set2(movement.dx, movement.dy);
 		ch.gameStep = b.getChar();
 		ch.xy.x = decompX(b.getChar());
@@ -501,7 +590,7 @@ class Game {
 		var id = b.getByte();
 		var ch = this.chars[id];
 		var movement = Movement.fromBuf(b);
-		ch.movementId = movement.id;
+		ch.setMovementId(movement.id);
 		ch.dxy.set2(movement.dx, movement.dy);
 		ch.gameStep = b.getChar();
 		ch.xy.x = decompX(b.getChar());
@@ -579,6 +668,7 @@ if (typeof module !== 'undefined') {
 	module.exports.compX = compX;
 	module.exports.compY = compY;
 	module.exports.compA = compA;
+	module.exports.decompA = decompA;
 	module.exports.allocateBuf = allocateBuf;
 	module.exports.wrap = wrap;
 	module.exports.MSG_GET_ALL_CHAR = MSG_GET_ALL_CHAR;
