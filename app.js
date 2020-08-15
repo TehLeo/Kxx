@@ -35,9 +35,21 @@ class Global {
 	}
 }
 
+
+
+const express = require('express');
+const PORT = process.env.PORT || 3000;
+const INDEX = 'index.html';
+
+const server = express()
+  //.use((req, res) => res.sendFile(INDEX, { root: __dirname+"/client/" }))
+  .use('/client', express.static(__dirname + '/client'))
+  .listen(PORT, () => console.log(`Listening on ${PORT}`));
+
 const gl = new Global();
 const WebSocket = require("ws");
-const wss = new WebSocket.Server({ port: 5000 });
+//const wss = new WebSocket.Server({ port: 5000 });
+const wss = new WebSocket.Server({ server });
 
 var playerIndex = 0;
 
@@ -52,7 +64,7 @@ wss.on("connection", ws => {
 	
 	p.game = gl.games[0];
 	p.game.playersA.push(p);
-	p.charId = Math.min(id, 7);
+	p.charId = Math.min(id%8, 7);
 
 	p.chan.send(p.game.getGameTime(lib._tmp()).flip());
 

@@ -513,7 +513,9 @@ var chan = null;
 var reader = new FileReader();
 
 function init() {
-	var chan0 = new WebSocket("ws://" + "127.0.0.1" + ":" + 5000);
+	//var HOST = "ws://" + "127.0.0.1" + ":" + 5000";
+	var HOST = location.origin.replace(/^http/, 'ws');
+	var chan0 = new WebSocket(HOST);
 	chan0.binaryType = "arraybuffer";
 
 	gl.player = new Player(chan0, -1, "unknown");

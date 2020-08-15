@@ -1,7 +1,28 @@
-"engines": {
-  "node": "12.18.x"
-},
-"scripts": {
-  "start": "node app.js"
+{
+  "name": "kal7",
+  "version": "0.1.0",
+  "description": "kal test",
+  "main": "app.js",
+  "dependencies": {
+    "bufferutil": "^4.0.1",
+	"express": "^4.17.1",
+    "utf-8-validate": "^5.0.2",
+    "ws": "~7.3.1"
+  },
+  "devDependencies": {},
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/TehLeo/Kxx.git"
+  },
+  "keywords": [
+    "kal"
+  ],
+  "author": "TehLeo",
+  "license": "BSD-2-Clause",
+  "bugs": {
+    "url": "https://github.com/TehLeo/Kxx/issues"
+  }
 }
-
